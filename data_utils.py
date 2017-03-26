@@ -7,9 +7,6 @@ import csv
 import sys
 import _pickle as cPickle
 from tensorflow.python.platform import gfile
-from nltk import pos_tag
-from nltk.stem import WordNetLemmatizer
-from nltk.corpus import wordnet
 try:
 	import cPickle as pickle
 except ImportError:
@@ -17,20 +14,7 @@ except ImportError:
 
 MAX_LENGTH = 40
 MIN_LENGTH = 10
-MIN_VOCAB_COUNT = 5
-lemmatizer = WordNetLemmatizer()
-
-def get_wordnet_pos(tag):
-	if tag.startswith('J'):
-		return wordnet.ADJ
-	elif tag.startswith('V'):
-		return wordnet.VERB
-	elif tag.startswith('N'):
-		return wordnet.NOUN
-	elif tag.startswith('R'):
-		return wordnet.ADV
-	else:
-		return wordnet.NOUN
+MIN_VOCAB_COUNT = 50
 
 class VocabularyProcessor(object):
 	def __init__(self, max_document_length, vocabulary, unknown_limit=0):
@@ -59,7 +43,7 @@ class VocabularyProcessor(object):
 				if word_ids[idx] == 0:
 					unknown += 1
 			length = length+1
-			if unknown <= self.unknown_limit:
+			if unknown < self.unknown_limit:
 				data.append(word_ids)
 				lengths.append(length)
 
@@ -84,8 +68,8 @@ def clean_str(string):
 	string = re.sub(r'([A-Z][A-Za-z]*)([.])( )', r'\1\3', string)
 	string = re.sub(r"\'s", " \'s", string)
 	string = re.sub(r"\'ve", " \'ve", string)
-	string = re.sub(r"Can\'t", "can \'t", string)
-	string = re.sub(r"can\'t", "can \'t", string)
+	string = re.sub(r"Can\'t", "n \'t", string)
+	string = re.sub(r"can\'t", "n \'t", string)
 	string = re.sub(r"n\'t", " n\'t", string)
 	string = re.sub(r"\'re", " \'re", string)
 	string = re.sub(r"\'d", " \'d", string)
@@ -112,13 +96,7 @@ def add_test_vocab(test_data, vocab, must_vocab):
 			else:
 				q_string = re.sub("_____", "",row[1])
 				q_string = clean_str(q_string)
-				pos_s = pos_tag(q_string.split())
-				split_lemma_s = [lemmatizer.lemmatize(w, get_wordnet_pos(tag)) for w, tag in pos_s]
-				q_string = ' '.join(split_lemma_s)
-
-				pos_s = pos_tag(row[2:])
-				split_lemma_s = [lemmatizer.lemmatize(w, get_wordnet_pos(tag)) for w, tag in pos_s]
-				q_string += ' '+' '.join(split_lemma_s)
+				q_string += ' '+' '.join(row[2:])
 				for w in q_string.split():
 					vocab[w] += 1
 					must_vocab[w] = 1				
@@ -162,18 +140,15 @@ def pre_process_train(train_dir, test_data, prepro_path, vocab_path):
 				split_s = s.split()
 				if len(split_s) <= MIN_LENGTH:
 					continue
-				pos_s = pos_tag(split_s)
-				split_lemma_s = [lemmatizer.lemmatize(w, get_wordnet_pos(tag)) for w, tag in pos_s]
-				lemma_s = ' '.join(split_lemma_s)
-				for w in split_lemma_s:
+				for w in split_s:
 					vocab[w] += 1 
 				vocab['<START>'] += 1
 				vocab['<END>'] += 1
-				if len(split_lemma_s) >= MAX_LENGTH-2:
-					s_sen = lemma_s.split(',')
-					split_sen += ['<START> '+s_+' <END>' for s_ in s_sen if len(s_.split()) > MIN_LENGTH]
+				if len(split_s) >= MAX_LENGTH-2:
+					s_sen = s.split(',')
+					split_sen += ['<START> '+s+' <END>' for s in s_sen if len(s.split()) > MIN_LENGTH]
 				else:
-					split_sen += ['<START> '+lemma_s+' <END>']
+					split_sen += ['<START> '+s+' <END>']
 			
 			total_sen += split_sen
 
@@ -183,7 +158,7 @@ def pre_process_train(train_dir, test_data, prepro_path, vocab_path):
 	for k, v in sorted(vocab.items(), key=lambda x:x[1], reverse=True):
 		if v >= MIN_VOCAB_COUNT or must_vocab.get(k, 0) > 0:
 			vocabulary.append(k)
-	vocab_processor = VocabularyProcessor(max_document_length=MAX_LENGTH, vocabulary=vocabulary, unknown_limit=5)
+	vocab_processor = VocabularyProcessor(max_document_length=MAX_LENGTH, vocabulary=vocabulary, unknown_limit=1)
 	train_data, lengths = vocab_processor.transform(total_sen)
 
 	np.random.seed(100)
@@ -237,9 +212,7 @@ def load_n_process_test(test_data, vocab_processor):
 				continue
 			else:
 				test_struct['raw_question'] = row[1]
-				pos_s = pos_tag(row[2:])
-				split_lemma_s = [lemmatizer.lemmatize(w, get_wordnet_pos(tag)) for w, tag in pos_s]
-				test_struct['choices'] = split_lemma_s # without white space
+				test_struct['choices'] = row[2:] # without white space
 				c_string = clean_str(row[1].split("_____")[0])+" _____ "+clean_str(row[1].split("_____")[1])
 				c_string = c_string.replace(",", "")
 				c_string = re.split(r"[.?!;:]", c_string)
@@ -250,9 +223,6 @@ def load_n_process_test(test_data, vocab_processor):
 						q_string = string
 						test_struct['index'] = s_str.index("_____") + 1 # adding <START>
 						break
-				pos_s = pos_tag(q_string.split())
-				split_lemma_s = [lemmatizer.lemmatize(w, get_wordnet_pos(tag)) for w, tag in pos_s]
-				q_string = ' '.join(split_lemma_s)
 				test_struct['q_question'] = "<START> "+q_string+" <END>"
 				format_choices = []
 				for c in test_struct['choices']:
